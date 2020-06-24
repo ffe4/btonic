@@ -31,3 +31,7 @@ class BtonicHeader:
     def serialize(self) -> bytes:
         return self.magic_number + b"\x00" * 28 + b"\x04" + b"\x00" * 31
         pass
+
+
+def extract_files(filename):
+    raise NotImplementedError
