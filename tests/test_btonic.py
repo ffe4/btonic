@@ -30,7 +30,7 @@ def test_converts_nhk_btonic_file_to_xml(tmp_path):
         assert output.read_bytes() == f.read()
 
 
-@patch("btonic.convert")
+@patch("btonic.btonic.convert")
 def test_cli_passes_converter_correct_input_file(convert, tmp_path):
     runner = CliRunner()
     output = tmp_path / "output.xml"
@@ -50,7 +50,7 @@ def test_cli_correctly_writes_converter_result_to_output_file(tmp_path):
     file = tmp_path / "input.exi"
     file.write_bytes(b"")
 
-    with patch("btonic.convert", return_value=b"expected"):
+    with patch("btonic.btonic.convert", return_value=b"expected"):
         result = runner.invoke(btonic.main, [str(file), str(output)])
 
     assert result.exit_code == 0
