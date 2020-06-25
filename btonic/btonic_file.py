@@ -1,6 +1,8 @@
 import logging
+import struct
+from collections import namedtuple
 from dataclasses import dataclass
-from mmap import mmap, ACCESS_READ
+from mmap import ACCESS_READ, mmap
 
 
 @dataclass
@@ -38,17 +40,34 @@ class BtonicFile:
     def __init__(self, filename):
         self.filename = filename
         self._file_object = None
+        self._header = None
+        self._segment_table = None
 
     def __enter__(self):
         self._file_object = open(self.filename, "rb")
         self._mmap = mmap(self._file_object.fileno(), 0, access=ACCESS_READ)
         self._mv = memoryview(self._mmap)
+        self._initialize_file_metadata()
         return self
 
     def __exit__(self, *args):
         self._mv.release()
         self._mmap.close()
         self._file_object.close()
+
+    def _initialize_file_metadata(self):
+        self._header = BtonicHeader.deserialize(bytes(self._mv[0:64]))
+        self._segment_table = self._parse_segment_table(self._mv[64:8256])
+
+    @staticmethod
+    def _parse_segment_table(data):
+        Segment = namedtuple("Segment", ["offset", "size"])
+        segments = []
+        for (offset, size) in struct.iter_unpack(">II", data):
+            if not offset and not size:
+                break
+            segments.append(Segment(offset, size))
+        return segments
 
 
 def extract_files(filename):

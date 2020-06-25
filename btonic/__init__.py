@@ -1,5 +1,4 @@
 from btonic.btonic import main
-
 from btonic.btonic_file import BtonicFile
 
 __version__ = "0.1.0"
