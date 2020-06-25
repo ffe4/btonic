@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from mmap import mmap, ACCESS_READ
 
 
 @dataclass
@@ -31,6 +32,23 @@ class BtonicHeader:
     def serialize(self) -> bytes:
         return self.magic_number + b"\x00" * 28 + b"\x04" + b"\x00" * 31
         pass
+
+
+class BtonicFile:
+    def __init__(self, filename):
+        self.filename = filename
+        self._file_object = None
+
+    def __enter__(self):
+        self._file_object = open(self.filename, "rb")
+        self._mmap = mmap(self._file_object.fileno(), 0, access=ACCESS_READ)
+        self._mv = memoryview(self._mmap)
+        return self
+
+    def __exit__(self, *args):
+        self._mv.release()
+        self._mmap.close()
+        self._file_object.close()
 
 
 def extract_files(filename):
