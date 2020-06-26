@@ -1,10 +1,10 @@
 import struct
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from btonic.btonic_file import BtonicFile, BtonicHeader
+from btonic.btonic_file import BlockList, BtonicFile, BtonicHeader
 
 
 class TestBtonicHeader:
@@ -42,14 +42,15 @@ class TestBtonicFile:
     def test_context_manager_sets_up_read_only_memoryview_and_closes_file_object(
         self, tmp_path: Path
     ):
+        expected = b"\x01\x00" * (2 ** 10)
         file = tmp_path / "test"
-        file.write_bytes(b"expected")
+        file.write_bytes(expected)
         instance = BtonicFile(str(file))
 
         assert instance._file_object is None
         with instance:
             assert instance._mv.readonly
-            assert instance._mv == b"expected"
+            assert instance._mv == expected
         assert instance._file_object.closed
 
     def test_entering_context_calls_initialize_file_metadata(self, tmp_path: Path):
@@ -65,35 +66,99 @@ class TestBtonicFile:
         initialize.assert_called_once_with()
 
     @pytest.mark.parametrize(
-        "attribute,initializer_func",
-        [
-            ("_header", "btonic.btonic_file.BtonicHeader.deserialize"),
-            ("_segment_table", "btonic.btonic_file.BtonicFile._parse_segment_table"),
-        ],
+        "attribute", ["_header", "_block_list"],
     )
-    def test_initialize_file_metadata_initializes_needed_variables(
-        self, attribute, initializer_func
-    ):
+    def test_initialize_file_metadata_initializes_attributes(self, attribute):
         instance = BtonicFile("")
-        instance._mv = memoryview(b"\x00" * (2 ** 16))
+        instance._mv = memoryview(b"\x01\x00" * (2 ** 10))
 
-        with patch(initializer_func, return_value="expected"):
-            instance._initialize_file_metadata()
+        assert getattr(instance, attribute) is None
+        instance._initialize_file_metadata()
+        assert getattr(instance, attribute) is not None
 
-        assert getattr(instance, attribute) == "expected"
+    @pytest.mark.parametrize("block_list", [[(4, 10)], [(4, 10), (100, 31), (12, 20)]])
+    def test_parse_block_table_returns_list_of_locations(self, block_list):
+        serialized_list = b"".join([struct.pack(">II", *block) for block in block_list])
+        serialized_list += b"\x00" * 8  # block list is terminated by empty entry
+
+        parsed_blocks = BtonicFile._parse_block_table(memoryview(serialized_list))
+
+        assert len(parsed_blocks) == len(block_list)
+        for i, (offset, size) in enumerate(block_list):
+            assert offset == parsed_blocks[i].offset
+            assert size == parsed_blocks[i].size
+
+
+class TestBlockList:
+    def test_block_list_initialization(self, monkeypatch):
+        mock_data_blocks = [
+            b"MAIN\x00\x00\x00\x00\x00\x00dg\x00\x01\x00\x01",
+            b"data\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02list\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03index\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x04",
+            b"\x00",
+            b"\x00",
+            b"XYZ\x00\x00\x00\x00\x00\x00\x00abc\x00\x00\x05"
+            b"EXPECTED\x00\x00def\x00\x00\x06",
+            b"\x00",
+            b"\x00",
+        ]
+        mock_locations = list(
+            zip(range(len(mock_data_blocks)), range(1, len(mock_data_blocks) + 1))
+        )
+        expected_fields = [
+            (None, None, True),
+            ("MAIN", "dg", True),
+            ("data", "", False),
+            ("list", "", False),
+            ("index", "", True),
+            ("XYZ", "abc", False),
+            ("EXPECTED", "def", False),
+        ]
+
+        mock_mem = MagicMock()
+        mock_mem.__getitem__.side_effect = lambda x: mock_data_blocks[x.start]
+
+        with patch("builtins.memoryview", return_value=mock_mem):
+            block_list = BlockList(mock_locations, memoryview())
+
+        for i, fields in enumerate(expected_fields):
+            block = block_list[i]
+            assert (block.name, block.ext, block.is_index) == fields
 
     @pytest.mark.parametrize(
-        "segment_list", [[(4, 10)], [(4, 10), (100, 31), (12, 20)],]
+        "index_block,expected",
+        [
+            (
+                b"MAIN\x00\x00\x00\x00\x00\x00dg\x00\x01\x00\x01",
+                [("MAIN", "dg", True, 1)],
+            ),
+            (
+                b"data\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02ABCDEFGHIJKLM\x00\x00\x0bindex\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x04",
+                [
+                    ("data", "", False, 2),
+                    ("ABCDEFGHIJ", "KLM", False, 11),
+                    ("index", "", True, 4),
+                ],
+            ),
+        ],
     )
-    def test_parse_segment_table_returns_segment_list(self, segment_list):
-        serialized_list = b"".join(
-            [struct.pack(">II", *segment) for segment in segment_list]
-        )
-        serialized_list += b"\x00" * 8  # segment list is terminated by empty entry
+    def test_parse_index_block_returns_records(self, index_block, expected):
+        result = BlockList._parse_index_block(index_block)
+        assert result == expected
 
-        parsed_segments = BtonicFile._parse_segment_table(memoryview(serialized_list))
-
-        assert len(parsed_segments) == len(segment_list)
-        for i, (offset, size) in enumerate(segment_list):
-            assert offset == parsed_segments[i].offset
-            assert size == parsed_segments[i].size
+    @pytest.mark.parametrize(
+        "record,expected",
+        [
+            (
+                b"MAIN\x00\x00\x00\x00\x00\x00dg\x00\x01\x00\x01",
+                ("MAIN", "dg", True, 1),
+            ),
+            (
+                b"data\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02",
+                ("data", "", False, 2),
+            ),
+            (b"HEADWORD\x00\x00txi\x00\x00\x0a", ("HEADWORD", "txi", False, 10)),
+        ],
+    )
+    def test_parse_block_record_returns_fields(self, record, expected):
+        result = BlockList._parse_index_block_record(record)
+        assert result == expected
