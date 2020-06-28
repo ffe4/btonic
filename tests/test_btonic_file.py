@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from btonic.btonic_file import BlockList, BtonicFile, BtonicHeader
+from btonic.btonic_file import BlockList, BtonicFile, BtonicHeader, DataBlock
 
 
 class TestBtonicHeader:
@@ -36,6 +36,25 @@ class TestBtonicHeader:
     def test_serialize_returns_correct_bytes(self, init_args, expected):
         header = BtonicHeader(*init_args)
         assert header.serialize() == expected
+
+
+class TestDataBlock:
+    @pytest.mark.parametrize(
+        "block,index",
+        [
+            (DataBlock(slice(0), "NAME", "TXT", False), 1),
+            (DataBlock(slice(0), "1234567890", "", True), 2),
+            (DataBlock(slice(0), "", "", True), 3),
+        ],
+    )
+    def test_serialize_index_block_parses_back_correctly(self, block: DataBlock, index):
+        result = BlockList._deserialize_index_block_record(
+            block.serialize_index_record(index)
+        )
+        assert result[0] == block.name
+        assert result[1] == block.ext
+        assert result[2] == block.is_index
+        assert result[3] == index
 
 
 class TestBtonicFile:
@@ -160,5 +179,5 @@ class TestBlockList:
         ],
     )
     def test_parse_block_record_returns_fields(self, record, expected):
-        result = BlockList._parse_index_block_record(record)
+        result = BlockList._deserialize_index_block_record(record)
         assert result == expected

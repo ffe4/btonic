@@ -12,6 +12,20 @@ class DataBlock:
     ext: str = None
     is_index: bool = None
 
+    def __post_init__(self):
+        if self.name and len(self.name.encode("utf-8")) > 10:
+            raise ValueError("DataBlock name attribute cannot be longer than 10 bytes")
+        if self.ext and len(self.ext.encode("utf-8")) > 3:
+            raise ValueError("DataBlock ext attribute cannot be longer than 3 bytes")
+
+    def serialize_index_record(self, block_index):
+        b = b""
+        b += self.name.encode("utf-8").ljust(10, b"\x00")
+        b += self.ext.encode("utf-8").ljust(3, b"\x00")
+        b += b"\x01" if self.is_index else b"\x00"
+        b += struct.pack(">H", block_index)
+        return b
+
 
 class BlockList(list):
     def __init__(self, block_locations, mem: memoryview):
@@ -33,8 +47,9 @@ class BlockList(list):
         super().__init__(blocks)
 
     @staticmethod
-    def _parse_index_block_record(data: bytes):
+    def _deserialize_index_block_record(data: bytes):
         return (
+            # REVENG there's a good chance that names are restricted to 8 bytes.
             data[:10].rstrip(b"\x00").decode("utf-8"),
             data[10:13].rstrip(b"\x00").decode("utf-8"),
             *struct.unpack(">?H", data[13:16]),
@@ -44,7 +59,9 @@ class BlockList(list):
     def _parse_index_block(cls, data: bytes):
         records = []
         for i in range(len(data) // 16):
-            records.append(cls._parse_index_block_record(data[i * 16 : i * 16 + 16]))
+            records.append(
+                cls._deserialize_index_block_record(data[i * 16 : i * 16 + 16])
+            )
         return records
 
 
