@@ -130,6 +130,50 @@ class BtonicFile:
             blocks.append(BlockLocation(offset, size))
         return blocks
 
+    def read_slice(self, s: slice):
+        return bytes(self._mv[s])
+
 
 def extract_files(filename):
-    raise NotImplementedError
+    # TODO write tests and refactor into coherent codebase
+    with BtonicFile(filename) as f:
+        data_block, list_block = None, None
+        for block in f._block_list:
+            if all((data_block, list_block)):
+                break
+            if block.name == "data":
+                data_block = f.read_slice(block.mem_slice)
+            if block.name == "list":
+                list_block = f.read_slice(block.mem_slice)
+        # parse file list
+        # --- DFLHEADER ---
+        encoding = list_block[:8].rstrip(b"\x00").decode("ascii")
+        encoding = {
+            "XML-SJIS": "shift_jis",
+            "XML-UTF8": "utf-8"
+        }.get(encoding, "utf-8")
+        # 8 unknown bytes
+        (number_of_files, ofs_filelist, len_filename, ofs_filenames,) = struct.unpack(
+            ">4I", list_block[16:32]
+        )
+        # 32 unknown bytes
+        # --- DFLHEADER END ---
+        record_size = 4 + len_filename  # add 4 byte ID
+        filenames = {}
+        files = []
+        for i in range(number_of_files):
+            filename_item = list_block[ofs_filenames + (record_size * i): ofs_filenames + (record_size * (i + 1))]
+            # TODO maybe assert that id is not already in dict
+            filenames[struct.unpack(">I", filename_item[:4])[0]] = (
+                filename_item[4:].rstrip(b"\x00").decode(encoding)
+            )
+            file_property_item = list_block[ofs_filelist + (16 * i): ofs_filelist + (16 * (i + 1))]
+            offset, size, storage_type, filename_id = struct.unpack(
+                ">4I", file_property_item
+            )
+            File = namedtuple("File", ["filename", "storage_type", "slice", "data"])
+            files.append(File(filenames[filename_id], storage_type, slice(offset, offset+size), b""))
+
+        # TODO extract data
+
+        return files

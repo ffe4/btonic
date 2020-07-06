@@ -1,3 +1,4 @@
+from hashlib import md5
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -23,13 +24,14 @@ def test_converts_nhk_btonic_file_to_xml(tmp_path: Path):
     output_directory = tmp_path / "out"
     output_directory.mkdir(exist_ok=False)
     output_file = output_directory / "Accent.xml"
+    with open(TEST_DATA_DIR / "nhk.xml", "rb") as f:
+        expected_output = md5(f.read()).hexdigest()
 
-    result = runner.invoke(btonic.main, [str(input_file), str(output_directory)])
+    result = runner.invoke(btonic.main, [str(input_file), "-o", str(output_directory)])
 
     assert result.exit_code == 0
     assert output_file.exists()
-    with open(TEST_DATA_DIR / "nhk.xml", "rb") as f:
-        assert output_file.read_bytes() == f.read()
+    assert md5(output_file.read_bytes()).hexdigest() == expected_output
 
 
 def test_cli_calls_extract_function_once_with_input_filename(tmp_path: Path):
